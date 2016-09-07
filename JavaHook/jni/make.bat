@@ -1,0 +1,2 @@
+ndk-build 
+pause
