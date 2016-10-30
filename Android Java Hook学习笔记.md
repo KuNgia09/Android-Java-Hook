@@ -1,33 +1,38 @@
-#Android Java Hook学习笔记#
+# Android Java Hook学习笔记 #
 
-##前言##
-  &emsp;&emsp;在Android上面实现了java hook的框架有xposed，cydia substrate和adbi，其中开源的只有xposed和adbi，网上有许多xposed 和 Cydia substrate的java hook教程，虽然能够实现java hook，但是我们没有弄明白hook的原理，没有学习到任何东西。
+## 前言 ##
+  &emsp;&emsp;在Android上面实现了java hook的框架有xposed，cydia  和 Cydia substrate的java hook教程substrate和adbi，其中开源的只有xposed和adbi，网上有许多xposed，虽然能够实现java hook，但是我们没有弄明白hook的原理，没有学习到任何东西。
 
    &emsp;&emsp;在看雪论坛看到一篇java hook的文章[注入安卓进程,并hook java世界的方法](http://bbs.pediy.com/showthread.php?t=186054&highlight=java+hook)，我们来以这篇文章来学习如何进行java hook
 
-##代码编译##
+## 代码编译 ##
  &emsp;&emsp;将文中提到的测试代码下载导入到eclipse中，最开始的还是进行ndk-build进行编译，查看Android.mk的内容发现编译了几个模块，将art的编译命令删除，执行ndk-build出现
 
-![001][1]
+![001](image/009.png)
+
 我们可以看到找不到andriod_runtime.h，但是在代码目录中我们可以看到这个头文件，在android.mk文件中我们也包含了这个文件的路径
 
     LOCAL_CFLAGS:= -I./jni/include/ -I./jni/dalvik/vm/ -I./jni/dalvik -DHAVE_LITTLE_ENDIAN
 
-当时我想编译成功也是弄了个把小时，一直提示找不到头文件，如果仔细看的话android.mk是在jni目录下的，所以需要修改Android.mk文件的内容，将前面的/jni去掉
+当时我想编译成功也是弄了个把小时，一直提示找不到头文件，如果仔细看的话android.mk是在jni目录下的，所以需要修改Android.mk文件的内容，将前面的`/jni`去掉
+
 
     LOCAL_CFLAGS:= -I./include/ -I./dalvik/vm/ -I./dalvik -DHAVE_LITTLE_ENDIAN    
     LOCAL_LDFLAGS	:=	-L./lib/  -L$(SYSROOT)/usr/lib -llog -ldvm -landroid_runtime  
-    
-再执行ndk-build就可以成功了
+
+
+
+再执行`ndk-build`就可以成功了
 同样地，我们可以将Android.mk命令改为这样
 
     LOCAL_CFLAGS:= -DHAVE_LITTLE_ENDIAN
     LOCAL_C_INCLUDES +=$(LOCAL_PATH)/include/  $(LOCAL_PATH)/dalvik/vm  $(LOCAL_PATH)/dalvik 
 
-##代码分析##
-这里我将so.cpp的内容修改了一下，让libso.so被注入之后自动执行 InjectInterface函数
+## 代码分析 ##
+这里我将so.cpp的内容修改了一下，让libso.so被注入之后自动执行 `InjectInterface`函数
 
-    extern "C" void InjectInterface(char*arg) __attribute__((constructor));
+```c
+extern "C" void InjectInterface(char*arg) __attribute__((constructor));
     extern "C" void InjectInterface(char*arg)
     {
     
@@ -36,19 +41,24 @@
     log_("*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*");
     Hook();
     log_("*-*-*-*-*-*-*- End -*-*-*-*-*-*-*-*-*-*");
-    
-    }
 
-  &emsp;&emsp;InjectInterface调用了MethodHooker.cpp中的Hook函数
+}
+```
 
-    int Hook(){
+
+`InjectInterface`调用了MethodHooker.cpp中的Hook函数
+
+
+```c
+int Hook(){
     init();
     void* handle = dlopen("/data/local/tmp/libTest.so",RTLD_NOW);
     const char *dlopen_error = dlerror();
     if(!handle){
     	ALOG("Error","cannt load plugin :%s",dlopen_error);
     	return -1;
-    }
+}
+
     SetupFunc setup = (SetupFunc)dlsym(handle,"getpHookInfo");
     const char *dlsym_error = dlerror();
     if (dlsym_error) {
@@ -63,12 +73,18 @@
     ALOG("LOG","Target Method:%s",hookInfo[1].tMethod);
     
     ClassMethodHook(hookInfo[1]);
-    }
+}
+
+```
+
 
 init()函数获取当前进程的javaVM,然后加载libTest.so，执行getHookInfo()函数，
-Test.c中的 getpHookInfo函数
+Test.c中的 `getpHookInfo`函数
+
+   
     
-    HookInfo hookInfos[] = {
+```c
+HookInfo hookInfos[] = {
     		{"android/net/wifi/WifiInfo","getMacAddress","()Ljava/lang/String;",(void*)test},
     		{"com/example/javahook/MainActivity","test","()Ljava/lang/String;",(void*)test},
     		//{"android/app/ApplicationLoaders","getText","()Ljava/lang/CharSequence;",(void*)test},
@@ -78,14 +94,16 @@ Test.c中的 getpHookInfo函数
     	*pInfo = hookInfos;
     	return sizeof(hookInfos) / sizeof(hookInfos[0]);
     }
+```
 
 
 
-从代码我们可以看到 hookInfos[]数组中的Hook函数信息，包括函数所在的类，函数名称，函数类型以及FakeHook函数地址，getpHookInfo函数就是将这些信息返回给HookInfo *hookInfo指针
+从代码我们可以看到 hookInfos[]数组中的Hook函数信息，包括函数所在的类，函数名称，函数类型以及FakeHook函数地址，getpHookInfo函数就是将这些信息返回给HookInfo `*hookInfo`指针
 
-获取到要hook的函数信息，执行ClassMethodHook()
+获取到要hook的函数信息，执行`ClassMethodHook()`
 
-    bool ClassMethodHook(HookInfo info){
+```c++
+bool ClassMethodHook(HookInfo info){
     
     	JNIEnv *jenv = GetEnv();
         //寻找getMacAddress所在的类"android/net/wifi/WifiInfo"
@@ -137,9 +155,11 @@ Test.c中的 getpHookInfo函数
     	DetachCurrent();
     	return true;
     }
-    
+```
+
 java类中的每个方法都对应一个jMethodID,在Android源码中Method结构体的定义如下：
 
+```c
     struct Method {
     487/* the class we are a part of */
     488ClassObject*clazz;
@@ -236,9 +256,12 @@ java类中的每个方法都对应一个jMethodID,在Android源码中Method结�
     579/* set if method was called during method profiling */
     580boolinProfile;
     581};
+```
+
 accessflags字段表示方法的属性，例如public，private，native等等，
 这份代码的核心也就是修改accessflags字段，实现将java层的函数改为native层我们自己的FakeHook函数
 
+```c
     bool HookDalvikMethod(jmethodID jmethod){
 	    Method *method = (Method*)jmethod;
 	    //关键!!将目标方法修改为native方法
@@ -262,9 +285,12 @@ accessflags字段表示方法的属性，例如public，private，native等等�
 	    method->jniArgInfo = computeJniArgInfo(&method->prototype);
 	    }
     }
+```
 
 DalvikMethodHook只是函数实现了将hook函数属性改为native函数，设置Method的insSize和registerSize，并没有将hook函数绑定到我们的native hook函数，RegisterNatives就实现了这个功能，至此java hook已经实现完成。
 
+
+```c
     //func为NULL时不自行绑定,后面扩展吧
     if(info.handleFunc != NULL){
     		//关键!!将目标方法关联到自定义的native方法
@@ -273,28 +299,32 @@ DalvikMethodHook只是函数实现了将hook函数属性改为native函数，设
     			return false;
     		}
     }
-
+```
 当我们在Android应用中执行getMacAddress()函数后，就会跳转到我们的native FakeHook函数
 
+```c
     //FakeHook函数
     JNIEXPORT jstring JNICALL test(JNIEnv *env, jclass clazz)  
     {  
     __android_log_print(ANDROID_LOG_VERBOSE, "Log", "call <native_printf> in java");
     return (*env)->NewStringUTF(env,"haha ");;
     }
+```
 
-##ddi框架分析##
+## ddi框架分析 ##
 
- &emsp;&emsp;在github上有个开源框架adbi实现了android so的inject和hook，adbi的作者再接再厉实现了java层的hook框架ddi，ddi框架目录如下
+在github上有个开源框架adbi实现了android  so的inject和hook，adbi的作者再接再厉实现了java层的hook框架ddi，ddi框架目录如下
 
 dalvikhook目录：实现了java层的hook
 
 exampel目录:smsdispatch和strmon例子
-![002][2]
+![002](image/002.png)
+
 ###编译###
 ddi框架的使用需要结合adbi框架，将ddi和adbi放在同一级目录
 
-    //编译libbase.a 实现so库的hook
+ 
+    //编译libbase.a 实现so库的hoo
     cd D:\github\adbi\instruments\base\jni
     ndk-build
     
@@ -310,6 +340,7 @@ ddi框架的使用需要结合adbi框架，将ddi和adbi放在同一级目录
 我们需要将smsdispatch.so注入到要hook的android进程中
 先分析smsdisptahc.c的入口
 
+```c
     // set my_init as the entry point
     void __attribute__ ((constructor)) my_init(void);
     
@@ -325,9 +356,9 @@ ddi框架的使用需要结合adbi框架，将ddi和adbi放在同一级目录
         
     	hook(&eph, getpid(), "libc.", "epoll_wait", my_epoll_wait, 0);
     }
+```
 
-
- &emsp;&emsp;hook函数参数：
+hook函数参数：
 
 * arg1：hook_t结构体指针
 * arg2:要hook函数所在so库的名称
@@ -338,6 +369,7 @@ ddi框架的使用需要结合adbi框架，将ddi和adbi放在同一级目录
 入口调用hook函数，hook libc.so中的epoll_wait函数 ，跳转到my_epoll_wait函数
 
 
+```c
 	static int my_epoll_wait(int epfd, struct epoll_event *events, int maxevents,int timeout)
     {
 		int (*orig_epoll_wait)(int epfd, struct epoll_event *events, int maxevents, int timeout);
@@ -359,13 +391,14 @@ ddi框架的使用需要结合adbi框架，将ddi和adbi放在同一级目录
 		int res = orig_epoll_wait(epfd, events, maxevents, timeout);    
 		return res;
 }
-
+```
     
 
 my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
 我们先看下dalvik_hook_setup函数
  
    
+```c
     int dalvik_hook_setup(struct dalvik_hook_t *h, char *cls, char *meth, char *sig, int ns, void *func)
     {
     	log("start call exec hook_setup\n")
@@ -400,12 +433,15 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
     
     	return 1;
     }
+```
 
- &emsp;&emsp;再来看下dalvik_hook函数，也是实现java hook的核心部分
+
+再来看下dalvik_hook函数，也是实现java hook的核心部分
 [Method结构资料](http://blog.csdn.net/roland_sun/article/details/38640297)
 
 
-    void* dalvik_hook(struct dexstuff_t *dex, struct dalvik_hook_t *h)
+```c
+void* dalvik_hook(struct dexstuff_t *dex, struct dalvik_hook_t *h)
     {
     	if (h->debug_me)
     		log("dalvik_hook: class %s\n", h->clname)
@@ -520,12 +556,14 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
     
     	return (void*)0;
     }
+```
 
 至此，我们发现ddi框架实现方法和看雪帖子中实现java hook的核心思想是修改java函数为native 函数，即找到hook函数的jMethodID进行修改
 
 不过ddi框架的FakeHook函数实现了对原函数的调用，
 
 
+```c
 	/*
 		FakeHook函数的实现
 		通常hook函数的话都是为了做一些额外的工作，如果想要通过java代码实现功能
@@ -582,13 +620,15 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
 		//恢复被hook之后的Method结构体内容
     	dalvik_postcall(&d, &dpdu);
     }
-    
+```
+
 ###java hook实战###
 这里我使用ddi实现hook中的WifiInfo.class类中的getMacAddress，并且在FakeHook函数中调用java函数，并且调用原始的getMacAddress函数
 
 1.java层代码编写，生成dex文件
 
  创建getMacAddressHook.java文件，目录位于..../com/example/javahook/下getMacAddressHook.java
+```java
     package com.example.javahook;
     
     public class getMacAddressHook{
@@ -596,9 +636,11 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
     		System.out.println("this is a joke");
     	}
     }
+```
+
     用法:
-	javac -source 1.6 -target 1.6 getMacAddressHook.java
-	//切换到package目录 在src目录执行
+    javac -source 1.6 -target 1.6 getMacAddressHook.java
+    //切换到package目录 在src目录执行
 	dx --dex --output=getMacAddressHook.dex com/example/javahook/getMacAddressHook.class
     由于我使用的jdk version 是1.8 使用dx工具会提示无效的class文件 这里将java强制编译为了1.6版本
     -source 1.6表示java编译器版本为1.6 -target 1.6表示运行在1.6版本的jvm中
@@ -609,12 +651,12 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
     参考http://stackoverflow.com/questions/15085602/android-javac-and-dx-trouble-processing-class-name-and-path-do-not-match
 
 
-
-
-1.native层代码编写
+## native层代码编写
 
 我将smsdispatch这个例子改写一下，实现getMacAddress的hook
 修改`dalvik_hook_setup`的参数
+
+```java
 
 	/*
 	"Landroid/net/wifi/WifiInfo;"hook函数所在的类
@@ -624,14 +666,15 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
 	my_getmacaddress：FakeHook函数
 	*/
     dalvik_hook_setup(&dpdu,"Landroid/net/wifi/WifiInfo;","getMacAddress","()Ljava/lang/String;",1,my_getmacaddress);
-
+```
 当我们修改了上述代码之后，android程序调用getMacAddress()函数就会调用我们的FakeHook函数
 
-    static jstring my_getmacaddress(JNIEnv *env, jobject obj){
+```c
+static jstring my_getmacaddress(JNIEnv *env, jobject obj){
     	log("having enter fakemacaddress\n");
     	
-    		
-    	// load dex classes
+
+// load dex classes
     	int cookie = dexstuff_loaddex(&d, "/data/local/tmp/getMacAddressHook.dex");
     	log("libgetMacAddressHook: loaddex res = %x\n", cookie)
     	if (!cookie)
@@ -640,33 +683,34 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
     	void *clazz = dexstuff_defineclass(&d, "com/example/javahook/getMacAddressHook", cookie);
     	log("libgetMacAddressHook: clazz = 0x%x\n", clazz)
     
-    	// call constructor and passin the pdu
+// call constructor and passin the pdu
     	jclass smsd = (*env)->FindClass(env, "com/example/javahook/getMacAddressHook");
     	//寻找构造函数
     	jmethodID constructor = (*env)->GetMethodID(env, smsd, "<init>", "()V");
     	if (constructor) { 
     
-    		//调用构造函数，我们写的构造函数没有arg
+//调用构造函数，我们写的构造函数没有arg
     		jobject fakeobj = (*env)->NewObject(env, smsd, constructor);  
     		log("libgetMacAddressHook: new obj = 0x%x\n", fakeobj)
     		
-    		if (!fakeobj)
+if (!fakeobj)
     			log("libgetMacAddressHook: failed to create smsdispatch class, FATAL!\n")
     	}
     	else {
     		log("libgetMacAddressHook: constructor not found!\n")
     	}
     
-		//恢复getMacAddress()函数的jMethodID信息
+//恢复getMacAddress()函数的jMethodID信息
     	dalvik_prepare(&d, &dpdu, env);
     	//调用原始的getMacAddress函数
     	jstring result=(jstring)((*env)->CallObjectMethod(env, obj, dpdu.mid));
   		
-    	log("Mac address is 0x%x\n", result);
+log("Mac address is 0x%x\n", result);
     	log("success calling : %s\n", dpdu.method_name)
     	dalvik_postcall(&d, &dpdu);
     	return result;
     }
+```
 
 既然完成了hook getMacAddressHook代码的编写，我们运行一下
 
@@ -674,29 +718,25 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
 确保将getMacAddressHook.dex和libgetMacAddressHook.so放到/data/loal/tmp
 以及/data/dalvik-cache目录具有写权限
 
-开启adb logcat -s "System.out"
+开启*adb logcat* -s *"System.out"*
 没hook之前点击HookMe按钮
-![003][3]
+![003](image/003.png)
 
     adb shell
     su
     cd /data/local/tmp
     ll
     //注入libgetMacAddressHook.so进行hook
-	./inject pid /data/local/tmp/libgetMacAddressHook.so
+    ./inject pid /data/local/tmp/libgetMacAddressHook.so
 
-![004][4]
-![005][5]
+![004](image/004.png)
+![005](image/005.png)
 
 再点击HookMe按钮 成功执行了我们加载的dex代码输出信息"This is a joke "并调用了原始的getMacAddress()函数
-![006][6]
+![006](image/006.png)
 
 查看生成的smsdispatch.log信息
-![007][7]
-
-
-    
-    
+![007](image/007.png)
 
 
 #参考资料#
@@ -741,3 +781,10 @@ my_epoll_wait中实现java hook的函数是dalvik_hook_setup和dalvik_hook
   [5]: http://i2.buimg.com/573854/aa4bd3a8c67b3ed5.png
   [6]: http://i2.buimg.com/573854/4363df6b93b79cb3.png
   [7]: http://i2.buimg.com/573854/4091bf79579bf1f4.png
+[2]: 
+[3]: 
+[1]: 
+[6]: 
+[7]: 
+[4]: 
+[5]: 
